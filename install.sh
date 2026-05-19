@@ -1,4 +1,5 @@
 #!/bin/bash
+
 echo "Checking if running as root (includes using elevation tools as well)..."
 if [ "$(id -u)" -ne 0 ]; then
   echo "Please run this script with sudo or as root."
@@ -26,10 +27,25 @@ cat << 'EOF' > /etc/security/access.conf
 +:(susr-admin):ALL
 
 # --- allow single user
-+:barrett:ALL
++:user:ALL
 
 # --- deny everything else
 -:ALL:ALL
 EOF
+
+# --------------------------------------------------------
+# NEW: PYTHON ELEVATION SANDBOX CREATION
+# --------------------------------------------------------
+echo "Creating dedicated Python interpreter sandbox for susr..."
+# Find the real system path of the current python3 installation
+REAL_PYTHON=$(readlink -f "$(which python3)")
+
+# Make a dedicated binary clone specifically for your elevator script
+cp "$REAL_PYTHON" /usr/bin/python3-susr
+
+echo "Granting process capability overrides to sandbox binary..."
+# Assign native process-id manipulation flags to the interpreter sandbox binary
+setcap cap_setuid,cap_setgid+ep /usr/bin/python3-susr
+
 
 echo "Done!, Use the GUI or manually edit it to add users and groups to the access.conf file."
