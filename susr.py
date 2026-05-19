@@ -16,23 +16,39 @@ if platform.system() not in ["Linux", "Darwin"]:
 
 p = pam.pam()
 
-# ----------------------------
-# STATE (persists during run)
-# ----------------------------
 attempts = 0
 cooldown_active = False
 cooldown_lock = threading.Lock()
 
 
 # ----------------------------
-# COOLDOWN TIMER (10 min)
+# COOLDOWN TIMER
 # ----------------------------
 def cooldown_timer():
     global cooldown_active
-    time.sleep(600)  # 10 min cooldown
+    time.sleep(600)
     with cooldown_lock:
         cooldown_active = False
     print("\n[susr] cooldown finished — you can try again")
+
+
+# ----------------------------
+# PAM AUTH WRAPPER (NEW)
+# ----------------------------
+def authenticate(user, password):
+    """
+    Returns:
+    True  -> success
+    False -> failure (could be wrong password OR access.conf deny)
+    """
+
+    result = p.authenticate(
+        user,
+        password,
+        service="susr"
+    )
+
+    return result
 
 
 # ----------------------------
@@ -45,39 +61,49 @@ def main():
         print("usage: susr <command> [args...]")
         sys.exit(1)
 
-    # block if cooldown is active
     with cooldown_lock:
         if cooldown_active:
             print("[susr] chill — cooldown active, wait 10 min")
             sys.exit(1)
 
     user = pwd.getpwuid(os.getuid()).pw_name
-
     password = getpass.getpass(f"[susr] password for {user}: ")
 
-    authenticated = p.authenticate(user, password, service="susr")
+    ok = authenticate(user, password)
 
-    if authenticated:
+    # ----------------------------
+    # SUCCESS
+    # ----------------------------
+    if ok:
         attempts = 0
         print("[susr] auth success")
         subprocess.run(sys.argv[1:])
         return
 
     # ----------------------------
-    # FAILED AUTH HANDLING
+    # FAILURE (IMPORTANT PART)
     # ----------------------------
     attempts += 1
-    print("[susr] wrong password")
 
+    # THIS is your new clarity layer
+    print("[susr] access denied")
+
+    if attempts == 1:
+        print("[susr] reason: wrong password OR not in access.conf")
+
+    elif attempts < 4:
+        print(f"[susr] attempt {attempts}/4")
+
+    # ----------------------------
+    # COOLDOWN TRIGGER
+    # ----------------------------
     if attempts >= 4:
         print("[susr] too many attempts — cooldown started")
 
         with cooldown_lock:
             cooldown_active = True
 
-        t = threading.Thread(target=cooldown_timer, daemon=True)
-        t.start()
-
+        threading.Thread(target=cooldown_timer, daemon=True).start()
         sys.exit(1)
 
 
