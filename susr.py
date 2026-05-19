@@ -1,59 +1,85 @@
 #!/usr/bin/env python3
 
-
-
 import os
 import sys
 import platform
-if platform.system() == "Linux" or platform.system() == "Darwin":
-    import pwd
-    import getpass
-    import subprocess
-    import pam
-    import argparse
-    import threading
-    import time
+import time
+import threading
+import getpass
+import pwd
+import subprocess
+import pam
 
-    p = pam.pam()
-    global attempts
-    global timed_attempts
-    attempts = 0
-    timed_attempts = 0
+if platform.system() not in ["Linux", "Darwin"]:
+    print("SUSR only works on Linux/macOS")
+    sys.exit(1)
 
-    def main():
-        if len(sys.argv) < 2:
-            print("usage: susr <command> [args...]")
+p = pam.pam()
+
+# ----------------------------
+# STATE (persists during run)
+# ----------------------------
+attempts = 0
+cooldown_active = False
+cooldown_lock = threading.Lock()
+
+
+# ----------------------------
+# COOLDOWN TIMER (10 min)
+# ----------------------------
+def cooldown_timer():
+    global cooldown_active
+    time.sleep(600)  # 10 min cooldown
+    with cooldown_lock:
+        cooldown_active = False
+    print("\n[susr] cooldown finished — you can try again")
+
+
+# ----------------------------
+# MAIN
+# ----------------------------
+def main():
+    global attempts, cooldown_active
+
+    if len(sys.argv) < 2:
+        print("usage: susr <command> [args...]")
+        sys.exit(1)
+
+    # block if cooldown is active
+    with cooldown_lock:
+        if cooldown_active:
+            print("[susr] chill — cooldown active, wait 10 min")
             sys.exit(1)
 
-        current_user = pwd.getpwuid(os.getuid()).pw_name
+    user = pwd.getpwuid(os.getuid()).pw_name
 
-        password = getpass.getpass(f"[susr] password for {current_user}:")
+    password = getpass.getpass(f"[susr] password for {user}: ")
 
-        authenticated = p.authenticate(
-            current_user,
-            password,
-            service="susr"
-        )
+    authenticated = p.authenticate(user, password, service="susr")
 
-        def timer():
-            time.sleep(600)  # 10 minutes
-            global timed_attempts
-            timed_attempts += 1
-            print("[susr] 10-minute cooldown period completed. You may try again.")
+    if authenticated:
+        attempts = 0
+        print("[susr] auth success")
+        subprocess.run(sys.argv[1:])
+        return
 
-        if not authenticated:
-            if not authenticated and attempts < 4:
-                print("[susr] Sussy baka, we know your the imposter, we called a emergancy meeting, and the actual admin will deal with this instance, (advice, dont vent infront of others)")
-                attempts += 1
-            elif not authenticated and attempts >= 4:
-                print("[susr] Finally, you got ejected, wait 10 min for next game...")
-                # Start background timer
-                timer_thread = threading.Thread(target=timer, daemon=True)
-                timer_thread.start()
-                sys.exit(1)
+    # ----------------------------
+    # FAILED AUTH HANDLING
+    # ----------------------------
+    attempts += 1
+    print("[susr] wrong password")
 
-        command = sys.argv[1:]
+    if attempts >= 4:
+        print("[susr] too many attempts — cooldown started")
 
-        subprocess.run(command)
-else:
-    print("SUSR is a Linux/Unix Privalge Escalation Tool, and it will not work on Windows (Windows has UAC)")
+        with cooldown_lock:
+            cooldown_active = True
+
+        t = threading.Thread(target=cooldown_timer, daemon=True)
+        t.start()
+
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
