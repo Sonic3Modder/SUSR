@@ -51,5 +51,9 @@ if platform.system() == "Linux" or platform.system() == "Darwin":
                 timer_thread = threading.Thread(target=timer, daemon=True)
                 timer_thread.start()
                 sys.exit(1)
+
+        command = sys.argv[1:]
+
+        subprocess.run(command)
 else:
     print("SUSR is a Linux/Unix Privalge Escalation Tool, and it will not work on Windows (Windows has UAC)")
